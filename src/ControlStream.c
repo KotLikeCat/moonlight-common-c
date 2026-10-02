@@ -1882,6 +1882,12 @@ int startControlStream(void) {
         // Set the peer timeout to 10 seconds and limit backoff to 2x RTT
         enet_peer_timeout(peer, 2, 10000, 10000);
 #endif
+
+        // ENet drops a share of unreliable packets when RTT jitters (packet throttle).
+        // Real-time microphone frames must not be discarded by the sender, so keep the
+        // throttle fully open for our outgoing traffic (local state only).
+        peer->packetThrottle = ENET_PEER_PACKET_THROTTLE_SCALE;
+        peer->packetThrottleDeceleration = 0;
     }
     else {
         // NB: Do NOT use ControlPortNumber here. 47995 is correct for these old versions.
