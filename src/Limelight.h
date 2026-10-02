@@ -575,6 +575,11 @@ const char* LiGetStageName(int stage);
 // This function may only be called between LiStartConnection() and LiStopConnection().
 bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVariance);
 
+// Vibepollo protocol extension: sends one Opus frame (48 kHz, mono, 20 ms, max 200 bytes) of
+// microphone audio to the host. Thread-safe. Returns 0 on success, -1 on invalid length or send
+// failure, -2 if the control stream is not connected, -3 if the host/protocol does not support it.
+int LiSendMicrophoneOpusFrame(const unsigned char* opusData, int length);
+
 // This function queues a relative mouse move event to be sent to the remote server.
 int LiSendMouseMoveEvent(short deltaX, short deltaY);
 

@@ -107,6 +107,7 @@ static uint32_t lastSeenFrame;
 static bool stopping;
 static bool disconnectPending;
 static bool encryptedControlStream;
+static uint16_t micSequenceNumber;
 static bool hdrEnabled;
 static SS_HDR_METADATA hdrMetadata;
 
@@ -145,6 +146,7 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_SET_RGB_LED 11
 #define IDX_DS_ADAPTIVE_TRIGGERS 12
 #define IDX_CLIPBOARD_CHANGED 13
+#define IDX_MIC_AUDIO 14
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
@@ -164,6 +166,7 @@ static const short packetTypesGen3[] = {
     -1,     // Set RGB LED (unused)
     -1,     // Set Adaptive Triggers (unused)
     -1,     // Clipboard changed (unused)
+    -1,     // Microphone audio (unused)
 };
 static const short packetTypesGen4[] = {
     0x0606, // Request IDR frame
@@ -180,6 +183,7 @@ static const short packetTypesGen4[] = {
     -1,     // Set RGB LED (unused)
     -1,     // Set Adaptive Triggers (unused)
     -1,     // Clipboard changed (unused)
+    -1,     // Microphone audio (unused)
 };
 static const short packetTypesGen5[] = {
     0x0305, // Start A
@@ -196,6 +200,7 @@ static const short packetTypesGen5[] = {
     -1,     // Set RGB LED (unused)
     -1,     // Set Adaptive Triggers (unused)
     -1,     // Clipboard changed (unused)
+    -1,     // Microphone audio (unused)
 };
 static const short packetTypesGen7[] = {
     0x0305, // Start A
@@ -212,6 +217,7 @@ static const short packetTypesGen7[] = {
     -1,     // Set RGB LED (unused)
     -1,     // Set Adaptive Triggers (unused)
     -1,     // Clipboard changed (unused)
+    -1,     // Microphone audio (unused)
 };
 static const short packetTypesGen7Enc[] = {
     0x0302, // Request IDR frame
@@ -228,6 +234,7 @@ static const short packetTypesGen7Enc[] = {
     0x5502, // Set RGB LED (Sunshine protocol extension)
     0x5503, // Set Adaptive Triggers (Sunshine protocol extension)
     0x3003, // Clipboard changed (Vibepollo protocol extension)
+    0x3004, // Microphone audio (Vibepollo protocol extension, client to host)
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -1787,6 +1794,8 @@ bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVarianc
 int startControlStream(void) {
     int err;
 
+    micSequenceNumber = 0;
+
     if (AppVersionQuad[0] >= 5) {
         ENetAddress remoteAddress, localAddress;
         ENetEvent event;
@@ -2120,4 +2129,40 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata) {
 
     *metadata = hdrMetadata;
     return true;
+}
+
+// Vibepollo protocol extension: send one Opus frame (48 kHz mono, 20 ms) to the host.
+// Payload: u8 version (1), u16 LE seq, Opus bytes. Unreliable sequenced on CTRL_CHANNEL_MIC.
+int LiSendMicrophoneOpusFrame(const unsigned char* opusData, int length) {
+    uint8_t payload[3 + MIC_MAX_OPUS_FRAME_SIZE];
+    uint16_t seq;
+
+    if (opusData == NULL || length <= 0 || length > MIC_MAX_OPUS_FRAME_SIZE) {
+        return -1;
+    }
+
+    if (peer == NULL || client == NULL || stopping) {
+        return -2;
+    }
+
+    // The extension only exists for the encrypted control stream on Sunshine-family hosts
+    if (!IS_SUNSHINE() || !encryptedControlStream || packetTypes == NULL || packetTypes[IDX_MIC_AUDIO] < 0) {
+        return -3;
+    }
+
+    PltLockMutex(&enetMutex);
+    seq = micSequenceNumber++;
+    PltUnlockMutex(&enetMutex);
+
+    payload[0] = 1; // version
+    payload[1] = (uint8_t)(seq & 0xFF);
+    payload[2] = (uint8_t)(seq >> 8);
+    memcpy(&payload[3], opusData, length);
+
+    if (!sendMessageEnet(packetTypes[IDX_MIC_AUDIO], (short)(3 + length), payload,
+                         CTRL_CHANNEL_MIC, 0, false)) {
+        return -1;
+    }
+
+    return 0;
 }
