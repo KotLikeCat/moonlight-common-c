@@ -488,6 +488,11 @@ typedef void(*ConnListenerSetControllerLED)(uint16_t controllerNumber, uint8_t r
 // 0x1 text, 0x2 HTML, 0x4 RTF, 0x8 PNG image.
 typedef void(*ConnListenerClipboardChanged)(uint32_t seq, uint32_t formats);
 
+// This callback is invoked when the host requests a byte range of an offered file (Vibepollo protocol extension).
+// offerId identifies the offered clipboard content. requestId is the request identifier.
+// fileIndex is the index within the offer. offset is the byte offset. length is the number of bytes (1-4 MiB).
+typedef void(*ConnListenerClipboardFileRequest)(const uint8_t offerId[16], uint32_t requestId, uint32_t fileIndex, uint64_t offset, uint32_t length);
+
 typedef struct _CONNECTION_LISTENER_CALLBACKS {
     ConnListenerStageStarting stageStarting;
     ConnListenerStageComplete stageComplete;
@@ -503,6 +508,7 @@ typedef struct _CONNECTION_LISTENER_CALLBACKS {
     ConnListenerSetControllerLED setControllerLED;
     ConnListenerSetAdaptiveTriggers setAdaptiveTriggers;
     ConnListenerClipboardChanged clipboardChanged;
+    ConnListenerClipboardFileRequest clipboardFileRequest;
 } CONNECTION_LISTENER_CALLBACKS, *PCONNECTION_LISTENER_CALLBACKS;
 
 // Use this function to zero the connection callbacks when allocated on the stack or heap

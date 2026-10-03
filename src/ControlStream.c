@@ -87,6 +87,13 @@ typedef struct _QUEUED_ASYNC_CALLBACK {
             uint32_t seq;
             uint32_t formats;
         } clipboardChanged;
+        struct {
+            uint8_t offerId[16];
+            uint32_t requestId;
+            uint32_t fileIndex;
+            uint64_t offset;
+            uint32_t length;
+        } clipboardFileRequest;
     } data;
     LINKED_BLOCKING_QUEUE_ENTRY entry;
 } QUEUED_ASYNC_CALLBACK, *PQUEUED_ASYNC_CALLBACK;
@@ -147,6 +154,7 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_DS_ADAPTIVE_TRIGGERS 12
 #define IDX_CLIPBOARD_CHANGED 13
 #define IDX_MIC_AUDIO 14
+#define IDX_CLIPBOARD_FILE_REQUEST 15
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
@@ -167,6 +175,7 @@ static const short packetTypesGen3[] = {
     -1,     // Set Adaptive Triggers (unused)
     -1,     // Clipboard changed (unused)
     -1,     // Microphone audio (unused)
+    -1,     // Clipboard file request (unused)
 };
 static const short packetTypesGen4[] = {
     0x0606, // Request IDR frame
@@ -184,6 +193,7 @@ static const short packetTypesGen4[] = {
     -1,     // Set Adaptive Triggers (unused)
     -1,     // Clipboard changed (unused)
     -1,     // Microphone audio (unused)
+    -1,     // Clipboard file request (unused)
 };
 static const short packetTypesGen5[] = {
     0x0305, // Start A
@@ -201,6 +211,7 @@ static const short packetTypesGen5[] = {
     -1,     // Set Adaptive Triggers (unused)
     -1,     // Clipboard changed (unused)
     -1,     // Microphone audio (unused)
+    -1,     // Clipboard file request (unused)
 };
 static const short packetTypesGen7[] = {
     0x0305, // Start A
@@ -218,6 +229,7 @@ static const short packetTypesGen7[] = {
     -1,     // Set Adaptive Triggers (unused)
     -1,     // Clipboard changed (unused)
     -1,     // Microphone audio (unused)
+    -1,     // Clipboard file request (unused)
 };
 static const short packetTypesGen7Enc[] = {
     0x0302, // Request IDR frame
@@ -235,6 +247,7 @@ static const short packetTypesGen7Enc[] = {
     0x5503, // Set Adaptive Triggers (Sunshine protocol extension)
     0x3003, // Clipboard changed (Vibepollo protocol extension)
     0x3004, // Microphone audio (Vibepollo protocol extension, client to host)
+    0x3005, // Clipboard file request (Vibepollo protocol extension, host to client)
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -1043,6 +1056,13 @@ static void asyncCallbackThreadFunc(void* context) {
             ListenerCallbacks.clipboardChanged(queuedCb->data.clipboardChanged.seq,
                                                queuedCb->data.clipboardChanged.formats);
             break;
+        case IDX_CLIPBOARD_FILE_REQUEST:
+            ListenerCallbacks.clipboardFileRequest(queuedCb->data.clipboardFileRequest.offerId,
+                                                   queuedCb->data.clipboardFileRequest.requestId,
+                                                   queuedCb->data.clipboardFileRequest.fileIndex,
+                                                   queuedCb->data.clipboardFileRequest.offset,
+                                                   queuedCb->data.clipboardFileRequest.length);
+            break;
         default:
             // Unhandled packet type from queueAsyncCallback()
             LC_ASSERT(false);
@@ -1060,7 +1080,8 @@ static bool needsAsyncCallback(unsigned short packetType) {
            packetType == packetTypes[IDX_SET_RGB_LED] ||
            packetType == packetTypes[IDX_HDR_INFO] ||
            packetType == packetTypes[IDX_DS_ADAPTIVE_TRIGGERS] ||
-           packetType == packetTypes[IDX_CLIPBOARD_CHANGED];
+           packetType == packetTypes[IDX_CLIPBOARD_CHANGED] ||
+           packetType == packetTypes[IDX_CLIPBOARD_FILE_REQUEST];
 }
 
 static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLength) {
@@ -1130,6 +1151,39 @@ static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLe
         BbGet32(&bb, &queuedCb->data.clipboardChanged.seq);
         BbGet32(&bb, &queuedCb->data.clipboardChanged.formats);
         queuedCb->typeIndex = IDX_CLIPBOARD_CHANGED;
+    }
+    else if (ctlHdr->type == packetTypes[IDX_CLIPBOARD_FILE_REQUEST]) {
+        uint8_t version;
+        uint32_t length;
+
+        if (packetLength < (int)(sizeof(*ctlHdr) + 37)) {
+            Limelog("Discarding runt clipboard file request packet: %d\n", packetLength);
+            free(queuedCb);
+            return;
+        }
+
+        BbGet8(&bb, &version);
+        if (version != 1) {
+            Limelog("Discarding clipboard file request with unsupported version: %d\n", version);
+            free(queuedCb);
+            return;
+        }
+
+        BbGetBytes(&bb, queuedCb->data.clipboardFileRequest.offerId, 16);
+        BbGet32(&bb, &queuedCb->data.clipboardFileRequest.requestId);
+        BbGet32(&bb, &queuedCb->data.clipboardFileRequest.fileIndex);
+        BbGet64(&bb, &queuedCb->data.clipboardFileRequest.offset);
+        BbGet32(&bb, &length);
+
+        // Validate length is between 1 MiB and 4 MiB
+        if (length < 1048576 || length > 4194304) {
+            Limelog("Discarding clipboard file request with invalid length: %u\n", length);
+            free(queuedCb);
+            return;
+        }
+
+        queuedCb->data.clipboardFileRequest.length = length;
+        queuedCb->typeIndex = IDX_CLIPBOARD_FILE_REQUEST;
     }
     else {
         // Unhandled packet type from needsAsyncCallback()
