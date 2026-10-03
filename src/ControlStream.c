@@ -1175,9 +1175,9 @@ static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLe
         BbGet64(&bb, &queuedCb->data.clipboardFileRequest.offset);
         BbGet32(&bb, &length);
 
-        // Validate length is between 1 MiB and 4 MiB
-        if (length < 1048576 || length > 4194304) {
-            Limelog("Discarding clipboard file request with invalid length: %u\n", length);
+        // Validate length is between 1 byte and 4 MiB
+        if (length < 1 || length > 4u * 1024 * 1024) {
+            Limelog("Discarding clipboard file request with length out of range: %u\n", length);
             free(queuedCb);
             return;
         }
